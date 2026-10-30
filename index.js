@@ -48,6 +48,49 @@ app.get("/api/events", async (req, res) => {
   }
 });
 
+// POST /api/events — create an event with a future date.
+app.post("/api/events", async (req, res) => {
+  const { title, description, type, image, location, date, creatorEmail } = req.body;
+  const fields = { title, description, type, image, location, date, creatorEmail };
+  const missing = Object.entries(fields)
+    .filter(([, value]) => typeof value !== "string" || !value.trim())
+    .map(([name]) => name);
+
+  if (missing.length) {
+    return res.status(400).json({ success: false, message: "Fill in all event fields.", missing });
+  }
+
+  const parsedDate = new Date(date + "T00:00:00.000Z");
+  const validDate = !Number.isNaN(parsedDate.getTime()) && parsedDate.toISOString().slice(0, 10) === date;
+  if (!validDate || date <= new Date().toISOString().slice(0, 10)) {
+    return res.status(400).json({ success: false, message: "Event date must be in the future." });
+  }
+
+  const event = {
+    title: title.trim(),
+    description: description.trim(),
+    type: type.trim(),
+    image: image.trim(),
+    location: location.trim(),
+    date,
+    creatorEmail: creatorEmail.trim().toLowerCase(),
+  };
+
+  try {
+    if (eventsCollection) {
+      const result = await eventsCollection.insertOne(event);
+      event._id = result.insertedId;
+    } else {
+      event._id = "event-" + Date.now();
+      sampleEvents.push(event);
+    }
+    return res.status(201).json({ success: true, message: "Event created", data: event });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, message: "Could not create event." });
+  }
+});
+
 // GET /api/events/:id — public details for one event.
 app.get("/api/events/:id", async (req, res) => {
   try {
