@@ -25,3 +25,13 @@ MongoDB is optional for the first API walkthrough. If `MONGODB_URI` is blank, ev
 - `GET /api/users/:email/events` — see your joined events; requires a login token for that email
 
 After login, send the returned JWT in the request header as `Authorization: Bearer YOUR_TOKEN` when calling protected event routes. The event creator's email comes from the login token, so it should not be sent in the event body.
+
+## Server files
+
+- `index.js` — starts Express, connects MongoDB, and sets up BetterAuth
+- `auth.js` — checks the JWT on protected requests
+- `getEvents.js` — lists upcoming events, shows event details, and lists joined events
+- `postEvents.js` — creates an event and joins an event
+- `putEvents.js` — updates an event created by the logged-in user
+- `deleteEvents.js` — deletes an event created by the logged-in user
+- `sampleEvents.js` — temporary examples used when MongoDB is not configured
