@@ -1,41 +1,66 @@
-import express from "express";
-import dotenv from "dotenv";
-import { MongoClient } from "mongodb";
-import { betterAuth } from "better-auth";
-import { mongodbAdapter } from "@better-auth/mongo-adapter";
-import { jwt } from "better-auth/plugins";
-import { toNodeHandler } from "better-auth/node";
-import { createRequireLogin } from "./auth.js";
-import { sampleEvents } from "./sampleEvents.js";
-import { addGetRoutes } from "./getEvents.js";
-import { addPostRoutes } from "./postEvents.js";
-import { addPutRoutes } from "./putEvents.js";
-import { addDeleteRoutes } from "./deleteEvents.js";
+import express from 'express';
+import dotenv from 'dotenv';
+import { MongoClient } from 'mongodb';
+import { betterAuth } from 'better-auth';
+import { mongodbAdapter } from '@better-auth/mongo-adapter';
+import { jwt } from 'better-auth/plugins';
+import { toNodeHandler } from 'better-auth/node';
+import { createRequireLogin } from './auth.js';
+import { sampleEvents } from './sampleEvents.js';
+import { addGetRoutes } from './getEvents.js';
+import { addPostRoutes } from './postEvents.js';
+import { addPutRoutes } from './putEvents.js';
+import { addDeleteRoutes } from './deleteEvents.js';
 
 dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 5000;
-const authURL = process.env.BETTER_AUTH_URL || "http://localhost:" + port;
-const client = process.env.MONGODB_URI ? new MongoClient(process.env.MONGODB_URI) : null;
+const authURL = process.env.BETTER_AUTH_URL || 'http://localhost:' + port;
+const clientURL = process.env.CLIENT_URL || 'http://localhost:3000';
+const client = process.env.MONGODB_URI
+  ? new MongoClient(process.env.MONGODB_URI)
+  : null;
 let authHandler = null;
 
+app.use((req, res, next) => {
+  if (req.headers.origin === clientURL) {
+    res.setHeader('Access-Control-Allow-Origin', clientURL);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader(
+      'Access-Control-Allow-Methods',
+      'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+    );
+    res.setHeader(
+      'Access-Control-Allow-Headers',
+      'Content-Type, Authorization',
+    );
+    res.setHeader('Vary', 'Origin');
+  }
+
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+
+  next();
+});
+
 // BetterAuth must receive its request before Express reads JSON bodies.
-app.all("/api/auth/*splat", (req, res) => {
+app.all('/api/auth/*splat', (req, res) => {
   if (!authHandler) {
-    return res.status(503).send({ message: "Authentication is not ready." });
+    return res.status(503).send({ message: 'Authentication is not ready.' });
   }
   return authHandler(req, res);
 });
 
 app.use(express.json());
 
-app.get("/", (req, res) => {
-  res.send("GoodNeighbor server is running");
+app.get('/', (req, res) => {
+  res.send('GoodNeighbor server is running');
 });
 
-app.get("/api/health", (req, res) => {
-  res.send({ success: true, message: "Server is healthy" });
+app.get('/api/health', (req, res) => {
+  res.send({ success: true, message: 'Server is healthy' });
 });
 
 const requireLogin = createRequireLogin(authURL);
@@ -45,25 +70,38 @@ async function startServer() {
 
   if (client) {
     await client.connect();
-    console.log("MongoDB Connected");
+    console.log('MongoDB Connected');
 
-    const database = client.db(process.env.DB_NAME || "goodneighbor");
-    eventsCollection = database.collection("events");
+    const database = client.db(process.env.DB_NAME || 'goodneighbor');
+    eventsCollection = database.collection('events');
 
     if (!process.env.BETTER_AUTH_SECRET) {
-      throw new Error("Add BETTER_AUTH_SECRET to your .env file.");
+      throw new Error('Add BETTER_AUTH_SECRET to your .env file.');
     }
+
+    // Google login শুধু তখনই চালু হবে যখন দুটো key-ই .env-এ আছে
+    const hasGoogle =
+      Boolean(process.env.GOOGLE_CLIENT_ID) &&
+      Boolean(process.env.GOOGLE_CLIENT_SECRET);
 
     const auth = betterAuth({
       database: mongodbAdapter(database, { client }),
       baseURL: authURL,
       secret: process.env.BETTER_AUTH_SECRET,
-      trustedOrigins: [process.env.CLIENT_URL || "http://localhost:3000"],
+      trustedOrigins: [clientURL],
       emailAndPassword: { enabled: true },
+      socialProviders: hasGoogle
+        ? {
+            google: {
+              clientId: process.env.GOOGLE_CLIENT_ID,
+              clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+            },
+          }
+        : {},
       plugins: [
         jwt({
           jwt: {
-            getSubject: (session) => session.user.id,
+            getSubject: session => session.user.id,
             definePayload: ({ user }) => ({ email: user.email }),
           },
         }),
@@ -71,9 +109,12 @@ async function startServer() {
     });
 
     authHandler = toNodeHandler(auth);
-    console.log("BetterAuth Connected");
+    console.log('BetterAuth Connected');
+    console.log(
+      hasGoogle ? 'Google login enabled' : 'Google login DISABLED (check .env)',
+    );
   } else {
-    console.log("MONGODB_URI is empty; using temporary sample events");
+    console.log('MONGODB_URI is empty; using temporary sample events');
   }
 
   addGetRoutes(app, eventsCollection, sampleEvents, requireLogin);
@@ -82,11 +123,11 @@ async function startServer() {
   addDeleteRoutes(app, eventsCollection, sampleEvents, requireLogin);
 
   app.listen(port, () => {
-    console.log("Server running at http://localhost:" + port);
+    console.log('Server running at http://localhost:' + port);
   });
 }
 
-startServer().catch((error) => {
-  console.error("Server could not start:", error.message);
+startServer().catch(error => {
+  console.error('Server could not start:', error.message);
   process.exit(1);
 });

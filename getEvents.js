@@ -1,21 +1,34 @@
 import { ObjectId } from "mongodb";
 
 export function addGetRoutes(app, eventsCollection, sampleEvents, requireLogin) {
-  // Get upcoming events, starting with the nearest date.
+  // Get events, newest created first. Upcoming only unless ?all=1 is sent.
   app.get("/api/events", async (req, res) => {
     try {
       const today = new Date().toISOString().slice(0, 10);
       const limit = Number.parseInt(req.query.limit, 10) || 0;
+      const includePast = req.query.all === "1" || req.query.all === "true";
+      const dateFilter = includePast ? {} : { date: { $gte: today } };
       let events;
 
       if (eventsCollection) {
-        let query = eventsCollection.find({ date: { $gte: today } }).sort({ date: 1 });
+        // Events created before createdAt existed fall back to the
+        // ObjectId timestamp, which also reflects creation order.
+        let query = eventsCollection
+          .find(dateFilter)
+          .sort({ createdAt: -1, _id: -1 });
         if (limit > 0) query = query.limit(limit);
         events = await query.toArray();
       } else {
         events = sampleEvents
-          .filter((event) => event.date >= today)
-          .sort((first, second) => first.date.localeCompare(second.date));
+          .filter((event) => includePast || event.date >= today)
+          .sort((first, second) => {
+            const firstCreated = new Date(first.createdAt ?? 0).getTime() || 0;
+            const secondCreated = new Date(second.createdAt ?? 0).getTime() || 0;
+            return (
+              secondCreated - firstCreated ||
+              String(second._id).localeCompare(String(first._id))
+            );
+          });
         if (limit > 0) events = events.slice(0, limit);
       }
 
@@ -44,6 +57,30 @@ export function addGetRoutes(app, eventsCollection, sampleEvents, requireLogin) 
     } catch (error) {
       console.error(error);
       res.status(500).send({ message: "Could not load event" });
+    }
+  });
+
+  // Get events created by the logged-in user.
+  app.get("/api/my-events", requireLogin, async (req, res) => {
+    try {
+      const email = req.user.email.toLowerCase();
+      let events;
+
+      if (eventsCollection) {
+        events = await eventsCollection
+          .find({ creatorEmail: email })
+          .sort({ date: 1 })
+          .toArray();
+      } else {
+        events = sampleEvents
+          .filter((event) => event.creatorEmail?.toLowerCase() === email)
+          .sort((first, second) => first.date.localeCompare(second.date));
+      }
+
+      res.send({ success: true, count: events.length, data: events });
+    } catch (error) {
+      console.error(error);
+      res.status(500).send({ message: "Could not load your events." });
     }
   });
 

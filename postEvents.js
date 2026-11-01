@@ -31,6 +31,7 @@ export function addPostRoutes(app, eventsCollection, sampleEvents, requireLogin)
       location: location.trim(),
       date,
       creatorEmail: req.user.email.toLowerCase(),
+      createdAt: new Date(),
     };
 
     try {
