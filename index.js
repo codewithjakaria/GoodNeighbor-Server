@@ -1,4 +1,5 @@
 import express from 'express';
+import cors from 'cors'; 
 import dotenv from 'dotenv';
 import { MongoClient } from 'mongodb';
 import { betterAuth } from 'better-auth';
@@ -17,35 +18,37 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 5000;
 const authURL = process.env.BETTER_AUTH_URL || 'http://localhost:' + port;
-const clientURL = process.env.CLIENT_URL || 'http://localhost:3000';
+
+
+const allowedOrigins = [
+  process.env.CLIENT_URL,
+  'https://good-neighbor-client.vercel.app',
+  'http://localhost:3000',
+  'http://localhost:5173',
+].filter(Boolean); 
+
 const client = process.env.MONGODB_URI
   ? new MongoClient(process.env.MONGODB_URI)
   : null;
 let authHandler = null;
 
-app.use((req, res, next) => {
-  if (req.headers.origin === clientURL) {
-    res.setHeader('Access-Control-Allow-Origin', clientURL);
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-    res.setHeader(
-      'Access-Control-Allow-Methods',
-      'GET, POST, PUT, PATCH, DELETE, OPTIONS',
-    );
-    res.setHeader(
-      'Access-Control-Allow-Headers',
-      'Content-Type, Authorization',
-    );
-    res.setHeader('Vary', 'Origin');
-  }
 
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(204);
-  }
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error('CORS Policy block carefully'));
+      }
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie'],
+  }),
+);
 
-  next();
-});
 
-// BetterAuth must receive its request before Express reads JSON bodies.
 app.all('/api/auth/*splat', (req, res) => {
   if (!authHandler) {
     return res.status(503).send({ message: 'Authentication is not ready.' });
@@ -79,7 +82,6 @@ async function startServer() {
       throw new Error('Add BETTER_AUTH_SECRET to your .env file.');
     }
 
-    // Google login শুধু তখনই চালু হবে যখন দুটো key-ই .env-এ আছে
     const hasGoogle =
       Boolean(process.env.GOOGLE_CLIENT_ID) &&
       Boolean(process.env.GOOGLE_CLIENT_SECRET);
@@ -88,7 +90,7 @@ async function startServer() {
       database: mongodbAdapter(database, { client }),
       baseURL: authURL,
       secret: process.env.BETTER_AUTH_SECRET,
-      trustedOrigins: [clientURL],
+      trustedOrigins: allowedOrigins,
       emailAndPassword: { enabled: true },
       socialProviders: hasGoogle
         ? {
@@ -123,7 +125,7 @@ async function startServer() {
   addDeleteRoutes(app, eventsCollection, sampleEvents, requireLogin);
 
   app.listen(port, () => {
-    console.log('Server running at http://localhost:' + port);
+    console.log('Server running at port ' + port);
   });
 }
 
