@@ -1,7 +1,7 @@
 import { ObjectId } from "mongodb";
 
 export function addGetRoutes(app, eventsCollection, sampleEvents, requireLogin) {
-  // Get events, newest created first. Upcoming only unless ?all=1 is sent.
+  
   app.get("/api/events", async (req, res) => {
     try {
       const today = new Date().toISOString().slice(0, 10);
@@ -11,8 +11,7 @@ export function addGetRoutes(app, eventsCollection, sampleEvents, requireLogin) 
       let events;
 
       if (eventsCollection) {
-        // Events created before createdAt existed fall back to the
-        // ObjectId timestamp, which also reflects creation order.
+        
         let query = eventsCollection
           .find(dateFilter)
           .sort({ createdAt: -1, _id: -1 });
@@ -39,7 +38,6 @@ export function addGetRoutes(app, eventsCollection, sampleEvents, requireLogin) 
     }
   });
 
-  // Get the details for one event.
   app.get("/api/events/:id", async (req, res) => {
     try {
       const id = req.params.id;
@@ -60,7 +58,6 @@ export function addGetRoutes(app, eventsCollection, sampleEvents, requireLogin) 
     }
   });
 
-  // Get events created by the logged-in user.
   app.get("/api/my-events", requireLogin, async (req, res) => {
     try {
       const email = req.user.email.toLowerCase();
@@ -84,7 +81,7 @@ export function addGetRoutes(app, eventsCollection, sampleEvents, requireLogin) 
     }
   });
 
-  // Get joined events for the logged-in user only.
+
   app.get("/api/users/:email/events", requireLogin, async (req, res) => {
     const email = req.params.email.toLowerCase();
 

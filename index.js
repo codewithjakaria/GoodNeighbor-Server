@@ -1,5 +1,4 @@
 import express from 'express';
-import cors from 'cors'; 
 import dotenv from 'dotenv';
 import { MongoClient } from 'mongodb';
 import { betterAuth } from 'better-auth';
@@ -16,38 +15,64 @@ import { addDeleteRoutes } from './deleteEvents.js';
 dotenv.config();
 
 const app = express();
+app.set('trust proxy', 1); // Render sits behind a proxy
 const port = process.env.PORT || 5000;
 const authURL = process.env.BETTER_AUTH_URL || 'http://localhost:' + port;
 
-
+// Origins allowed to call the API. CLIENT_URL may hold one or several
+// URLs separated by commas; localhost is always allowed for local dev.
 const allowedOrigins = [
-  process.env.CLIENT_URL,
-  'https://good-neighbor-client.vercel.app',
-  'http://localhost:3000',
-  'http://localhost:5173',
-].filter(Boolean); 
+  ...new Set(
+    [
+      ...(process.env.CLIENT_URL || '').split(','),
+      'http://localhost:3000',
+    ]
+      .map(origin => origin.trim().replace(/\/+$/, ''))
+      .filter(Boolean),
+  ),
+];
 
 const client = process.env.MONGODB_URI
   ? new MongoClient(process.env.MONGODB_URI)
   : null;
 let authHandler = null;
+let eventsCollection = null;
 
+// Startup config summary: presence only, never the values themselves.
+console.log('Allowed origins:', allowedOrigins);
+console.log('Env present:', {
+  MONGODB_URI: Boolean(process.env.MONGODB_URI),
+  BETTER_AUTH_URL: Boolean(process.env.BETTER_AUTH_URL),
+  BETTER_AUTH_SECRET: Boolean(process.env.BETTER_AUTH_SECRET),
+  GOOGLE_CLIENT_ID: Boolean(process.env.GOOGLE_CLIENT_ID),
+  GOOGLE_CLIENT_SECRET: Boolean(process.env.GOOGLE_CLIENT_SECRET),
+});
 
-app.use(
-  cors({
-    origin: function (origin, callback) {
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error('CORS Policy block carefully'));
-      }
-    },
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie'],
-  }),
-);
+// CORS: echo the exact allowed origin, answer preflight with 204.
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  const isAllowed = origin && allowedOrigins.includes(origin);
 
+  if (isAllowed) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader(
+      'Access-Control-Allow-Methods',
+      'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+    );
+    res.setHeader(
+      'Access-Control-Allow-Headers',
+      'Content-Type, Authorization',
+    );
+    res.setHeader('Vary', 'Origin');
+  }
+
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+
+  next();
+});
 
 app.all('/api/auth/*splat', (req, res) => {
   if (!authHandler) {
@@ -66,17 +91,32 @@ app.get('/api/health', (req, res) => {
   res.send({ success: true, message: 'Server is healthy' });
 });
 
+// Public check for the live deployment: confirms the server reads the
+// expected database. Registered before the /api/events/:id route.
+app.get('/api/events/health-check', async (req, res) => {
+  try {
+    const eventsCount = eventsCollection
+      ? await eventsCollection.estimatedDocumentCount()
+      : null;
+    res.send({ success: true, eventsCount });
+  } catch (error) {
+    console.error(error);
+    res.status(500).send({ success: false, message: 'Could not read events count' });
+  }
+});
+
 const requireLogin = createRequireLogin(authURL);
 
 async function startServer() {
-  let eventsCollection = null;
-
   if (client) {
     await client.connect();
-    console.log('MongoDB Connected');
 
-    const database = client.db(process.env.DB_NAME || 'goodneighbor');
+    const dbName = process.env.DB_NAME || 'goodneighbor';
+    const database = client.db(dbName);
     eventsCollection = database.collection('events');
+
+    console.log('MongoDB Connected');
+    console.log('Database:', dbName);
 
     if (!process.env.BETTER_AUTH_SECRET) {
       throw new Error('Add BETTER_AUTH_SECRET to your .env file.');
@@ -91,6 +131,15 @@ async function startServer() {
       baseURL: authURL,
       secret: process.env.BETTER_AUTH_SECRET,
       trustedOrigins: allowedOrigins,
+      // On Render (production) cookies must be cross-site: the client
+      // runs on Vercel, so SameSite=Lax would drop them on redirects.
+      ...(process.env.RENDER
+        ? {
+            advanced: {
+              defaultCookieAttributes: { sameSite: 'none', secure: true },
+            },
+          }
+        : {}),
       emailAndPassword: { enabled: true },
       socialProviders: hasGoogle
         ? {

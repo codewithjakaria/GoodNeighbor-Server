@@ -1,7 +1,7 @@
 import { ObjectId } from "mongodb";
 
 export function addDeleteRoutes(app, eventsCollection, sampleEvents, requireLogin) {
-  // Delete an event only when the logged-in user created the event.
+ 
   app.delete("/api/events/:id", requireLogin, async (req, res) => {
     try {
       const id = req.params.id;
